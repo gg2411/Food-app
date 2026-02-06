@@ -1,4 +1,4 @@
-import FoodSearch from "@/components/FoodSearch";
+import ToolTabs from "@/components/ToolTabs";
 
 function Section({
   id,
@@ -95,9 +95,9 @@ export default function Home() {
           <p className="text-lg text-gray-500 max-w-xl mx-auto">
             Low-FODMAP food checker for bloating + constipation relief.
             <br />
-            Search any food to find out if it&apos;s safe.
+            Search foods, scan barcodes, or photograph menus.
           </p>
-          <FoodSearch />
+          <ToolTabs />
         </div>
 
         {/* What is FODMAP */}
