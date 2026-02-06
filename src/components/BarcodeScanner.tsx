@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Html5Qrcode } from "html5-qrcode";
 import { getStoredApiKey } from "./ApiKeyModal";
 
 interface ProductInfo {
@@ -34,40 +33,41 @@ export default function BarcodeScanner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [step, setStep] = useState<"scan" | "product" | "analysis">("scan");
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scannerRef = useRef<any>(null);
   const foundRef = useRef(false);
+  const mountedRef = useRef(true);
 
-  const stopCamera = useCallback(async () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      stopScannerOnly();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stopScannerOnly = async () => {
     try {
       if (scannerRef.current) {
-        const state = scannerRef.current.getState();
-        // 2 = SCANNING, 3 = PAUSED
-        if (state === 2 || state === 3) {
-          await scannerRef.current.stop();
-        }
-        scannerRef.current.clear();
+        const scanner = scannerRef.current;
         scannerRef.current = null;
+        const state = scanner.getState?.();
+        if (state === 2 || state === 3) {
+          await scanner.stop();
+        }
+        scanner.clear?.();
       }
     } catch {
       // Ignore cleanup errors
     }
-    setScanning(false);
-  }, []);
+  };
 
-  useEffect(() => {
-    return () => {
-      if (scannerRef.current) {
-        try {
-          const state = scannerRef.current.getState();
-          if (state === 2 || state === 3) {
-            scannerRef.current.stop();
-          }
-          scannerRef.current.clear();
-        } catch {
-          // Ignore
-        }
-      }
-    };
+  const stopCamera = useCallback(async () => {
+    await stopScannerOnly();
+    if (mountedRef.current) {
+      setScanning(false);
+    }
   }, []);
 
   const lookupBarcode = useCallback(async (code: string) => {
@@ -87,7 +87,6 @@ export default function BarcodeScanner() {
       setProduct(data.product);
       setStep("product");
 
-      // Auto-analyze if API key is available
       const apiKey = getStoredApiKey();
       if (apiKey && data.product.ingredients) {
         await analyzeProduct(data.product, apiKey);
@@ -130,49 +129,92 @@ export default function BarcodeScanner() {
     }
   };
 
-  const startCamera = async () => {
+  const startCamera = useCallback(async () => {
     setError("");
     foundRef.current = false;
 
+    // First, show the scanner area so the div is visible and has dimensions
+    setScanning(true);
+
+    // Wait for React to render the visible div
+    await new Promise((r) => setTimeout(r, 100));
+
+    const el = document.getElementById(SCANNER_ID);
+    if (!el) {
+      setError("Scanner element not found. Please try again.");
+      setScanning(false);
+      return;
+    }
+
     try {
-      const html5Qrcode = new Html5Qrcode(SCANNER_ID);
+      // Dynamically import to avoid SSR issues
+      const { Html5Qrcode } = await import("html5-qrcode");
+
+      const html5Qrcode = new Html5Qrcode(SCANNER_ID, {
+        verbose: false,
+        formatsToSupport: [
+          0,  // QR_CODE
+          2,  // CODABAR
+          3,  // CODE_39
+          4,  // CODE_93
+          5,  // CODE_128
+          8,  // EAN_13
+          9,  // EAN_8
+          11, // ITF
+          15, // UPC_A
+          16, // UPC_E
+        ],
+      });
       scannerRef.current = html5Qrcode;
 
       await html5Qrcode.start(
         { facingMode: "environment" },
         {
           fps: 10,
-          qrbox: { width: 280, height: 160 },
+          qrbox: { width: 250, height: 150 },
           aspectRatio: 1.333,
         },
-        (decodedText) => {
-          // Prevent duplicate fires
+        (decodedText: string) => {
           if (foundRef.current) return;
           foundRef.current = true;
 
-          // Stop scanner and look up barcode
-          stopCamera().then(() => {
-            lookupBarcode(decodedText);
+          stopScannerOnly().then(() => {
+            if (mountedRef.current) {
+              setScanning(false);
+              lookupBarcode(decodedText);
+            }
           });
         },
         () => {
-          // Ignore scan failures (happens every frame without a barcode)
+          // Scan attempt failed, this is normal - fires every frame without barcode
         }
       );
-
-      setScanning(true);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("NotAllowedError")) {
+      if (mountedRef.current) {
+        setScanning(false);
+      }
+
+      const msg = err instanceof Error ? err.message : String(err);
+
+      if (msg.includes("NotAllowedError") || msg.includes("Permission")) {
         setError(
-          "Camera access denied. Please allow camera access in your browser settings and try again."
+          "Camera access denied. Please go to your browser settings, allow camera for this site, and try again."
+        );
+      } else if (msg.includes("NotFoundError")) {
+        setError(
+          "No camera found on this device."
+        );
+      } else if (msg.includes("NotReadableError") || msg.includes("TrackStartError")) {
+        setError(
+          "Camera is in use by another app. Close other camera apps and try again."
         );
       } else {
         setError(
-          "Could not access camera. Please make sure you allow camera permissions, or enter the barcode manually below."
+          `Could not start camera: ${msg}. You can enter the barcode manually below.`
         );
       }
     }
-  };
+  }, [lookupBarcode]);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,19 +253,23 @@ export default function BarcodeScanner() {
       {step === "scan" && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-gray-900">
-            {/* Scanner div - always in DOM so html5-qrcode keeps its reference */}
+            {/* Scanner region - always rendered, visibility controlled by CSS */}
             <div
               id={SCANNER_ID}
-              className={scanning ? "w-full" : "hidden"}
+              style={{
+                display: scanning ? "block" : "none",
+                width: "100%",
+                minHeight: scanning ? "300px" : "0",
+              }}
             />
 
-            {/* Stop button overlay when scanning */}
+            {/* Stop button overlay */}
             {scanning && (
               <button
                 onClick={stopCamera}
-                className="absolute top-3 right-3 z-10 bg-black/50 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-black/70"
+                className="absolute top-3 right-3 z-10 bg-black/60 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/80 transition-colors"
               >
-                Stop
+                Stop Camera
               </button>
             )}
 
