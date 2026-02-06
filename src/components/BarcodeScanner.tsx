@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 import { getStoredApiKey } from "./ApiKeyModal";
 
 interface ProductInfo {
@@ -23,6 +24,8 @@ interface AnalysisResult {
   raw?: string;
 }
 
+const SCANNER_ID = "barcode-scanner-region";
+
 export default function BarcodeScanner() {
   const [scanning, setScanning] = useState(false);
   const [manualCode, setManualCode] = useState("");
@@ -31,28 +34,41 @@ export default function BarcodeScanner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [step, setStep] = useState<"scan" | "product" | "analysis">("scan");
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<BarcodeDetector | null>(null);
-  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const foundRef = useRef(false);
 
-  const stopCamera = useCallback(() => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
+  const stopCamera = useCallback(async () => {
+    try {
+      if (scannerRef.current) {
+        const state = scannerRef.current.getState();
+        // 2 = SCANNING, 3 = PAUSED
+        if (state === 2 || state === 3) {
+          await scannerRef.current.stop();
+        }
+        scannerRef.current.clear();
+        scannerRef.current = null;
+      }
+    } catch {
+      // Ignore cleanup errors
     }
     setScanning(false);
   }, []);
 
   useEffect(() => {
     return () => {
-      stopCamera();
+      if (scannerRef.current) {
+        try {
+          const state = scannerRef.current.getState();
+          if (state === 2 || state === 3) {
+            scannerRef.current.stop();
+          }
+          scannerRef.current.clear();
+        } catch {
+          // Ignore
+        }
+      }
     };
-  }, [stopCamera]);
+  }, []);
 
   const lookupBarcode = useCallback(async (code: string) => {
     setLoading(true);
@@ -116,51 +132,44 @@ export default function BarcodeScanner() {
 
   const startCamera = async () => {
     setError("");
-    // Check for BarcodeDetector support
-    if (!("BarcodeDetector" in window)) {
-      setError(
-        "Barcode scanning is not supported in this browser. Please use Chrome or Edge, or enter the barcode manually below."
-      );
-      return;
-    }
+    foundRef.current = false;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 } },
-      });
-      streamRef.current = stream;
+      const html5Qrcode = new Html5Qrcode(SCANNER_ID);
+      scannerRef.current = html5Qrcode;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
+      await html5Qrcode.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 280, height: 160 },
+          aspectRatio: 1.333,
+        },
+        (decodedText) => {
+          // Prevent duplicate fires
+          if (foundRef.current) return;
+          foundRef.current = true;
 
-      detectorRef.current = new BarcodeDetector({
-        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"],
-      });
+          // Stop scanner and look up barcode
+          stopCamera().then(() => {
+            lookupBarcode(decodedText);
+          });
+        },
+        () => {
+          // Ignore scan failures (happens every frame without a barcode)
+        }
+      );
 
       setScanning(true);
-
-      // Scan every 500ms
-      scanIntervalRef.current = setInterval(async () => {
-        if (!videoRef.current || !detectorRef.current) return;
-
-        try {
-          const barcodes = await detectorRef.current.detect(videoRef.current);
-          if (barcodes.length > 0) {
-            const code = barcodes[0].rawValue;
-            stopCamera();
-            lookupBarcode(code);
-          }
-        } catch {
-          // Detection frame error, ignore
-        }
-      }, 500);
     } catch (err) {
-      if (err instanceof Error && err.name === "NotAllowedError") {
-        setError("Camera access denied. Please allow camera access and try again.");
+      if (err instanceof Error && err.message.includes("NotAllowedError")) {
+        setError(
+          "Camera access denied. Please allow camera access in your browser settings and try again."
+        );
       } else {
-        setError("Could not access camera. Try entering the barcode manually.");
+        setError(
+          "Could not access camera. Please make sure you allow camera permissions, or enter the barcode manually below."
+        );
       }
     }
   };
@@ -175,14 +184,14 @@ export default function BarcodeScanner() {
     }
   };
 
-  const reset = () => {
-    stopCamera();
+  const reset = useCallback(async () => {
+    await stopCamera();
     setProduct(null);
     setAnalysis(null);
     setError("");
     setManualCode("");
     setStep("scan");
-  };
+  }, [stopCamera]);
 
   const statusColor = {
     safe: "bg-emerald-100 text-emerald-800 border-emerald-300",
@@ -201,45 +210,51 @@ export default function BarcodeScanner() {
       {/* Scanner view */}
       {step === "scan" && (
         <div className="space-y-4">
-          <div className="relative aspect-[4/3] bg-gray-900 rounded-xl overflow-hidden">
+          <div className="relative rounded-xl overflow-hidden bg-gray-900">
             {scanning ? (
-              <>
-                <video
-                  ref={videoRef}
-                  className="w-full h-full object-cover"
-                  playsInline
-                  muted
-                />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-64 h-40 border-2 border-white/70 rounded-lg relative">
-                    <div className="absolute top-0 left-0 right-0 h-0.5 bg-red-500 animate-pulse"
-                         style={{ animation: "scanline 2s ease-in-out infinite" }} />
-                  </div>
-                </div>
+              <div className="relative">
+                <div id={SCANNER_ID} className="w-full" />
                 <button
                   onClick={stopCamera}
-                  className="absolute top-3 right-3 bg-black/50 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-black/70"
+                  className="absolute top-3 right-3 z-10 bg-black/50 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-black/70"
                 >
                   Stop
                 </button>
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-3 p-6">
-                <svg className="w-16 h-16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75H16.5v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75H16.5v-.75z" />
-                </svg>
-                <p className="text-center text-sm">
-                  Point your camera at a product barcode
-                </p>
-                <button
-                  onClick={startCamera}
-                  className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition-colors"
-                >
-                  Start Camera
-                </button>
               </div>
+            ) : (
+              <>
+                {/* Hidden div needed for Html5Qrcode to attach to */}
+                <div id={SCANNER_ID} className="hidden" />
+                <div className="flex flex-col items-center justify-center aspect-[4/3] text-gray-400 space-y-3 p-6">
+                  <svg
+                    className="w-16 h-16"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.5}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75H16.5v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75H16.5v-.75z"
+                    />
+                  </svg>
+                  <p className="text-center text-sm">
+                    Point your camera at a product barcode
+                  </p>
+                  <button
+                    onClick={startCamera}
+                    className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+                  >
+                    Start Camera
+                  </button>
+                </div>
+              </>
             )}
           </div>
 
@@ -395,33 +410,6 @@ export default function BarcodeScanner() {
           Scan Another Product
         </button>
       )}
-
-      <style jsx>{`
-        @keyframes scanline {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(160px); }
-        }
-      `}</style>
     </div>
   );
-}
-
-// Type declarations for BarcodeDetector API
-declare global {
-  interface BarcodeDetector {
-    detect(source: HTMLVideoElement | HTMLImageElement | ImageBitmap): Promise<
-      Array<{ rawValue: string; format: string }>
-    >;
-  }
-
-  // eslint-disable-next-line no-var
-  var BarcodeDetector: {
-    prototype: BarcodeDetector;
-    new (options?: { formats?: string[] }): BarcodeDetector;
-    getSupportedFormats(): Promise<string[]>;
-  };
-
-  interface Window {
-    BarcodeDetector: typeof BarcodeDetector;
-  }
 }
