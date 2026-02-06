@@ -211,50 +211,53 @@ export default function BarcodeScanner() {
       {step === "scan" && (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden bg-gray-900">
-            {scanning ? (
-              <div className="relative">
-                <div id={SCANNER_ID} className="w-full" />
-                <button
-                  onClick={stopCamera}
-                  className="absolute top-3 right-3 z-10 bg-black/50 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-black/70"
+            {/* Scanner div - always in DOM so html5-qrcode keeps its reference */}
+            <div
+              id={SCANNER_ID}
+              className={scanning ? "w-full" : "hidden"}
+            />
+
+            {/* Stop button overlay when scanning */}
+            {scanning && (
+              <button
+                onClick={stopCamera}
+                className="absolute top-3 right-3 z-10 bg-black/50 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-black/70"
+              >
+                Stop
+              </button>
+            )}
+
+            {/* Placeholder when not scanning */}
+            {!scanning && (
+              <div className="flex flex-col items-center justify-center aspect-[4/3] text-gray-400 space-y-3 p-6">
+                <svg
+                  className="w-16 h-16"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
                 >
-                  Stop
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75H16.5v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75H16.5v-.75z"
+                  />
+                </svg>
+                <p className="text-center text-sm">
+                  Point your camera at a product barcode
+                </p>
+                <button
+                  onClick={startCamera}
+                  className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  Start Camera
                 </button>
               </div>
-            ) : (
-              <>
-                {/* Hidden div needed for Html5Qrcode to attach to */}
-                <div id={SCANNER_ID} className="hidden" />
-                <div className="flex flex-col items-center justify-center aspect-[4/3] text-gray-400 space-y-3 p-6">
-                  <svg
-                    className="w-16 h-16"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75H16.5v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75H16.5v-.75z"
-                    />
-                  </svg>
-                  <p className="text-center text-sm">
-                    Point your camera at a product barcode
-                  </p>
-                  <button
-                    onClick={startCamera}
-                    className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-700 transition-colors"
-                  >
-                    Start Camera
-                  </button>
-                </div>
-              </>
             )}
           </div>
 
